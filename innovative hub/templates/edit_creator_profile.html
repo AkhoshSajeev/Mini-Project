@@ -1,0 +1,10 @@
+<h2>Edit Profile</h2>
+<form action="{{ url_for('edit_profile') }}" method="POST" enctype="multipart/form-data">
+    <label for="bio">Bio:</label><br>
+    <textarea name="bio" rows="4" cols="50">{{ current_bio }}</textarea><br><br>
+
+    <label for="profile_pic">Profile Picture:</label>
+    <input type="file" name="profile_pic"><br><br>
+
+    <button type="submit">Update Profile</button>
+</form>
