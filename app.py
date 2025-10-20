@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 from flask import request
 import os
 
+
 app = Flask(__name__)
 app.secret_key = 'secret-key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///hub.db'
@@ -31,6 +32,21 @@ class Idea(db.Model):
     description = db.Column(db.Text, nullable=False)
     creator_id = db.Column(db.Integer, db.ForeignKey('user.id'))
 
+    # Relationship to Like
+    likes = db.relationship('Like', backref='idea', lazy=True, cascade="all, delete-orphan")
+
+
+# ---------------- LIKE MODEL ----------------
+class Like(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    idea_id = db.Column(db.Integer, db.ForeignKey('idea.id'), nullable=False)
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'idea_id', name='unique_like'),)
+
+
+
+
 class CollaborationRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     idea_id = db.Column(db.Integer, db.ForeignKey('idea.id'))
@@ -49,6 +65,29 @@ class ChatMessage(db.Model):
 
     sender = db.relationship('User', foreign_keys=[sender_id], backref='sent_messages')
     receiver = db.relationship('User', foreign_keys=[receiver_id], backref='received_messages')
+
+
+
+@app.route('/like/<int:idea_id>', methods=['POST'])
+def like_idea(idea_id):
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    user_id = session['user_id']
+    existing_like = Like.query.filter_by(user_id=user_id, idea_id=idea_id).first()
+
+    if existing_like:
+        # Unlike
+        db.session.delete(existing_like)
+    else:
+        # Like
+        new_like = Like(user_id=user_id, idea_id=idea_id)
+        db.session.add(new_like)
+
+    db.session.commit()
+    # Redirect back to the same page silently
+    return redirect(request.referrer or url_for('home'))
+
 
 
 
@@ -238,39 +277,31 @@ def creator_profile(creator_id):
 
 @app.route('/creator/edit_profile', methods=['GET', 'POST'])
 def edit_profile():
-    creator_id = session.get('creator_id')
+    creator_id = session.get('user_id')  # <-- use 'user_id'
     if not creator_id:
-        return redirect(url_for('creator_login'))
+        return redirect(url_for('login'))  # redirect to normal login
+
+    user = User.query.get(creator_id)
+    if not user:
+        return "Creator not found", 404
 
     if request.method == 'POST':
-        bio = request.form['bio']
-        profile_pic = request.files['profile_pic']
-        pic_filename = None
+        user.bio = request.form.get('bio', user.bio)
 
+        profile_pic = request.files.get('profile_pic')
         if profile_pic and profile_pic.filename != '':
             pic_filename = secure_filename(profile_pic.filename)
             profile_pic.save(os.path.join('static/uploads', pic_filename))
+            user.profile_pic = pic_filename
 
-        conn = sqlite3.connect('your_db.db')
-        cursor = conn.cursor()
-        if pic_filename:
-            cursor.execute("UPDATE creators SET bio = ?, profile_pic = ? WHERE id = ?", (bio, pic_filename, creator_id))
-        else:
-            cursor.execute("UPDATE creators SET bio = ? WHERE id = ?", (bio, creator_id))
-        conn.commit()
-        conn.close()
-
+        db.session.commit()
         return redirect(url_for('creator_profile', creator_id=creator_id))
 
-    conn = sqlite3.connect('your_db.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT bio FROM creators WHERE id = ?", (creator_id,))
-    result = cursor.fetchone()
-    conn.close()
-
-    current_bio = result[0] if result else ''
-
-    return render_template('edit_creator_profile.html', current_bio=current_bio)
+    return render_template(
+        'edit_creator_profile.html',
+        current_bio=user.bio,
+        current_pic=user.profile_pic
+    )
 
 
 @app.route('/creator/post', methods=['GET', 'POST'])
